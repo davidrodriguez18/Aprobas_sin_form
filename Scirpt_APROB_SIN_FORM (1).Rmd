@@ -1,0 +1,100 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(openxlsx)
+library(RODBC)
+library(readxl)
+```
+
+IMPORTACIÓN DE DATOS
+```{r}
+rm(list=ls())
+#APROBADOS_SIN_FORMALIZAR <- read_excel("W:/1 FORMACION/NEGOZIA/DATA NEGOZIA DENTICUOTAS/BASE APROBADOS/APROBADOS SIN FORMALIZAR.xlsx", sheet = "APROBADOS")
+
+#IMPORTACIÓN INFORME DE FINANCIACIÓN, ARCHIVO .XLSB
+INF_FINANCIACION <- "X:/Z_PERSONALES/DAVID/Informes torre/INF_FINANCIACION_V10.xlsb" # Give the file name
+con2 <- odbcConnectExcel2007(INF_FINANCIACION)
+INFORME_FINANCIACION<- sqlFetch(con2, "INFORME_ULT_AÑO") # Provide name of sheet
+nrow(INFORME_FINANCIACION)
+
+data_colte<-"W:/1 FORMACION/NEGOZIA/DATA NEGOZIA DENTICUOTAS/2022_Solicitudes_Colte_.xlsb"
+con3 <- odbcConnectExcel2007(data_colte)
+data_colte <- sqlFetch(con3, "Base Total")
+
+data_comerciales <- read_excel("W:/1 FORMACION/NEGOZIA/1 Entrega 20210401_Usuarios Equipos Dentix (2).xlsx")
+```
+
+FILTROS DE INFORME DE FINANCIACIÓN 
+
+#IMPORTANTE CAMBIAR FECAHA ANTERIOR!!!
+```{r}
+#Filtro de fecha
+fecha_anterior<- as.Date("2024-01-31")
+INFORME_FINANCIACION_FILTRO <- INFORME_FINANCIACION %>% 
+                  filter(Fecha >fecha_anterior)
+#filtro de registro unico
+INFORME_FINANCIACION_FILTRO <- INFORME_FINANCIACION_FILTRO %>%
+                  filter(REG_UNICO ==1)
+#filtro de APROBADOS
+INFORME_FINANCIACION_FILTRO <- INFORME_FINANCIACION_FILTRO %>%
+                  filter(Estado_Fin =="APROBADO")       
+```
+
+Selección de variables 
+```{r}
+#Declaración de variables
+variables_eliminar<- c("CODIGO_ID","fecha_formalizacion","Vr aprob","Tasa",	"Boton DFS",	"REG_UNICO",	"FLUJO",	"Score",	"Quanto",	"ORIGEN",	"CODIGO CLINICA",	"disponible",	"Pagos Otros medios", "Formalizado_otros_medios", "Plazo","Estado_Fin",	"dia_form",	"mes_form","dias habiles",	"TIPO CAMPAÑA","año_form")
+#Eliminación de las varaibles
+INFORME_FINANCIACION_FILTRO_2 <- INFORME_FINANCIACION_FILTRO %>% 
+    select(!variables_eliminar)
+#Renombre variable llave
+INFORME_FINANCIACION_FILTRO_2<- INFORME_FINANCIACION_FILTRO_2 %>% 
+            rename(cedula_cliente=CC_titular)
+```
+
+```{r}
+#Unir bases de datos de financiación y de colte
+BASE_NUEVOS_REG <- INFORME_FINANCIACION_FILTRO_2 %>%       
+         left_join(select(data_colte,Nombre_cliente,cedula_comercial,Email,Celular,cedula_cliente),by="cedula_cliente") %>% 
+  distinct(cedula_cliente, .keep_all=TRUE)
+
+#Cambiar categorias de financiera y creación variable plazo
+BASE_NUEVOS_REG <- BASE_NUEVOS_REG %>% 
+      mutate(Financiera= if_else (Financiera=="dentix" ,"DFS",Financiera))
+
+BASE_NUEVOS_REG <- BASE_NUEVOS_REG %>% 
+      mutate(Plazo= if_else (Financiera=="COLTE_TC" ,36,0))
+
+
+
+#Creación variable comercial
+
+data_comerciales <- data_comerciales %>% 
+      rename(cedula_comercial="DNI")
+
+data_comerciales$cedula_comercial<-as.numeric(data_comerciales$cedula_comercial)
+
+BASE_NUEVOS_REG <- BASE_NUEVOS_REG %>%
+  left_join(select(data_comerciales, comercial,cedula_comercial), by =  "cedula_comercial")
+
+
+#REORDENAR LAS VARIABLES 
+BASE_NUEVOS_REG<- BASE_NUEVOS_REG %>% 
+  relocate(ID	, cedula_cliente,	Nombre_cliente,	Fecha,	Financiera,	Clinica,	"Valor Solicitado",	Vr_preaprobado,	Plazo,	comercial,	Ciudad,	Estado_orig,	cedula_comercial,	Email,	Celular,	REGIONAL,	año_sol,	mes_sol,	dia_sol)
+
+#Sacar varaibles que surgieron en el proceso y duplicadas
+BASE_NUEVOS_REG <- BASE_NUEVOS_REG[, !(colnames(BASE_NUEVOS_REG) %in% c("cedula comercial", "F37", "F38", "F39","Comercial"))]
+
+```
+
+```{r}
+write.xlsx(BASE_NUEVOS_REG, 'data_aprobados_nuevos.xlsx')
+```
+
+
